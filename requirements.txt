@@ -1,0 +1,4 @@
+# pylink se instala desde el SDK del EyeLink, no desde pip
+# Requiere tener instalado el EyeLink Developer Kit
+#
+# pip install --index-url=https://pypi.sr-research.com sr-research-pylink
