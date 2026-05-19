@@ -1,48 +1,41 @@
 import socket
 import pylink
-import sys
+import threading
 
-# 1. Configurar la conexión UDP local
-UDP_IP = "127.0.0.1" # localhost
-UDP_PORT = 5005      # Puerto de comunicación
+# Configuración
+UDP_IP = "127.0.0.1"
+PORT_PYTHON = 5005
+PORT_GODOT = 5006
+
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind((UDP_IP, UDP_PORT))
+sock.bind((UDP_IP, PORT_PYTHON))
 
-# 2. Iniciar conexión con EyeLink (Usaremos 'None' para modo Dummy si no está conectado)
-try:
-    el_tracker = pylink.EyeLink(None) # Cambia 'None' por la IP del EyeLink cuando esté conectado
-    print("Conectado al EyeLink.")
-    
-    # Abrir un archivo temporal de datos
-    el_tracker.openDataFile("test.edf")
-    el_tracker.startRecording(1, 1, 1, 1)
-except Exception as e:
-    print(f"Error conectando a EyeLink: {e}")
-    sys.exit()
+class GodotCalDisplay(pylink.EyeLinkCustomDisplay):
+    def draw_cal_target(self, x, y):
+        # Envía las coordenadas del punto a Godot
+        msg = f"CAL_DRAW,{int(x)},{int(y)}"
+        sock.sendto(msg.encode(), (UDP_IP, PORT_GODOT))
 
-print(f"Servidor Python escuchando en el puerto {UDP_PORT}...")
-print("Esperando mensajes de Godot...")
+    def clear_cal_display(self):
+        sock.sendto(b"CAL_ERASE", (UDP_IP, PORT_GODOT))
 
-try:
+# Inicialización
+el_tracker = pylink.EyeLink(None) # Usa None para modo Dummy
+pylink.openGraphicsEx(GodotCalDisplay())
+
+def escuchar_godot():
     while True:
-        # 3. Escuchar mensajes de Godot (se queda pausado aquí hasta recibir algo)
-        data, addr = sock.recvfrom(1024) # buffer de 1024 bytes
-        mensaje = data.decode('utf-8')
-        
-        print(f"-> Recibido desde Godot: {mensaje}")
+        data, addr = sock.recvfrom(1024)
+        msg = data.decode()
+        if msg == "CALIBRATE":
+            el_tracker.doTrackerSetup()
+            sock.sendto(b"CAL_END", (UDP_IP, PORT_GODOT))
+        # Aquí puedes añadir más lógica para eventos de trial
+        print(f"Comando recibido: {msg}")
 
-        # 4. Lógica de comunicación con EyeLink
-        if mensaje == "CALIBRATE":
-            print("   Instruyendo al EyeLink para calibrar...")
-            # En modo real, esto abre la pantalla de calibración
-            el_tracker.doTrackerSetup() 
-        else:
-            # Si es cualquier otro mensaje, lo inyecta como un MSG en el archivo .edf
-            el_tracker.sendMessage(mensaje)
-            print(f"   Marcador '{mensaje}' guardado en el archivo del EyeLink.")
+# Hilo en segundo plano
+thread = threading.Thread(target=escuchar_godot, daemon=True)
+thread.start()
 
-except KeyboardInterrupt:
-    print("\nCerrando servidor y guardando datos...")
-    el_tracker.stopRecording()
-    el_tracker.closeDataFile()
-    el_tracker.close()
+print("Servidor listo. Esperando comandos...")
+input("Presiona Enter para cerrar.\n")
