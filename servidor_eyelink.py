@@ -1,64 +1,71 @@
 import socket
 import pylink
 import sys
+import time
+import os
 
-# Configuración
 UDP_IP = "127.0.0.1"
 PORT_PYTHON = 5005
-PORT_GODOT = 5006
+EYELINK_IP = "100.1.1.1" 
+carpeta_destino = "data"
 
+if not os.path.exists(carpeta_destino):
+    os.makedirs(carpeta_destino)
+
+# Configurar Socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.bind((UDP_IP, PORT_PYTHON))
+sock.settimeout(0.5)
 
-class GodotCalDisplay(pylink.EyeLinkCustomDisplay):
-    def __init__(self):
-        super().__init__()
+# Conectar al EyeLink
+print("Conectando al EyeLink...")
+print(f"Conectando al EyeLink en {EYELINK_IP}...")
+try:
+    el_tracker = pylink.EyeLink(EYELINK_IP)
+    print("Conexión hardware establecida con éxito.") # <--- AÑADE ESTO
+except RuntimeError as error:
+    print(f"Error de conexión con EyeLink: {error}")
+    sys.exit()
 
-    # --- Funciones obligatorias del SDK ---
-    def setup_cal_display(self):
-        sock.sendto(b"CAL_START", (UDP_IP, PORT_GODOT))
+archivo_abierto = False
+EDF_FILENAME = "TEMP.EDF" # Nombre por defecto
 
-    def exit_cal_display(self):
-        sock.sendto(b"CAL_END", (UDP_IP, PORT_GODOT))
-
-    def clear_cal_display(self):
-        sock.sendto(b"CAL_ERASE", (UDP_IP, PORT_GODOT))
-
-    def draw_cal_target(self, x, y):
-        msg = f"CAL_DRAW,{int(x)},{int(y)}"
-        sock.sendto(msg.encode(), (UDP_IP, PORT_GODOT))
-
-    def erase_cal_target(self):
-        sock.sendto(b"CAL_ERASE", (UDP_IP, PORT_GODOT))
-
-    def get_input_key(self):
-        # Intentamos leer si Godot nos envió una tecla
-        sock.setblocking(False) # No congelar
+try:
+    while True:
         try:
             data, addr = sock.recvfrom(1024)
-            msg = data.decode()
-            if msg == "ACCEPT_CAL":
-                return [pylink.KeyInput(32, 0)] # Espacio
-            elif msg == "ESC_CAL":
-                return [pylink.KeyInput(27, 0)] # ESC
-        except:
+            mensaje = data.decode('utf-8').strip()
+            
+            # 1. Si llega el ID, abrimos archivo
+            if mensaje.startswith("CONNECT:"):
+                id_sujeto = mensaje.split(":")[1]
+                EDF_FILENAME = f"{id_sujeto}.EDF"
+                print(f"Iniciando registro para: {id_sujeto}")
+                el_tracker.openDataFile(EDF_FILENAME)
+                el_tracker.startRecording(1, 1, 1, 1)
+                archivo_abierto = True
+                continue
+
+            # 2. Si llega un mensaje y ya estamos grabando
+            if archivo_abierto and mensaje:
+                el_tracker.sendMessage(mensaje)
+                if mensaje == "END_EXPERIMENT":
+                    break
+            else:
+                print(f"DEBUG: Mensaje ignorado (esperando CONNECT): {mensaje}")
+                
+        except socket.timeout:
             pass
-        sock.setblocking(True)
-        return None
+except KeyboardInterrupt:
+    pass
 
-# --- Ejecución ---
-el_tracker = pylink.EyeLink(None) # Usa None para modo Dummy
-pylink.openGraphicsEx(GodotCalDisplay())
-
-el_tracker.openDataFile("test.edf")
-el_tracker.startRecording(1, 1, 1, 1)
-
-print("Servidor Python listo...")
-
-# Aquí recibimos el comando para CALIBRAR
-while True:
-    data, addr = sock.recvfrom(1024)
-    if data.decode() == "CALIBRATE":
-        print("Iniciando calibración...")
-        el_tracker.doTrackerSetup()
-        print("Calibración terminada.")
+finally:
+    if archivo_abierto:
+        el_tracker.stopRecording()
+        time.sleep(0.5)
+        el_tracker.setOfflineMode()
+        el_tracker.closeDataFile()
+        el_tracker.receiveDataFile(EDF_FILENAME, os.path.join(carpeta_destino, EDF_FILENAME))
+    el_tracker.close()
+    sock.close()
