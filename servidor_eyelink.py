@@ -3,16 +3,30 @@ import pylink
 import sys
 import time
 import os
+import serial
 
 UDP_IP = "127.0.0.1"
 PORT_PYTHON = 5005
 EYELINK_IP = "100.1.1.1" 
+PUERTO_COM_TTL = "COM3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 carpeta_destino = os.path.join(BASE_DIR, "data")
 
 if not os.path.exists(carpeta_destino):
     os.makedirs(carpeta_destino)
+
+# INICIALIZAR EL USB2TTL8 ---
+puerto_ttl = None
+try:
+    # 115200 es la tasa de baudios estándar para estos adaptadores
+    puerto_ttl = serial.Serial(PUERTO_COM_TTL, 115200, timeout=0)
+    puerto_ttl.write(bytes([0])) # Nos aseguramos de que todos los pines estén en 0 (apagados)
+    print(f"USB2TTL8 inicializado con éxito en {PUERTO_COM_TTL}")
+except Exception as e:
+    print(f"\n[!] Advertencia: No se pudo conectar el USB2TTL8 en {PUERTO_COM_TTL}.")
+    print(f"Detalle: {e}")
+    print("El experimento continuará guardando datos en EyeLink, pero sin enviar TTL al EEG.\n")
 
 # Configurar Socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -69,6 +83,32 @@ try:
             if archivo_abierto and mensaje:
                 el_tracker.sendMessage(mensaje)
                 print(f"-> MSG a EyeLink: {mensaje}")
+
+                # Extraemos el significado del string para enviar un número (1-255)
+                valor_ttl = 0
+                if "START" in mensaje:
+                    valor_ttl = 10  # 10 = Inicio de Trial
+                elif "END_FOUND" in mensaje:
+                    valor_ttl = 21  # 21 = Encontró la plataforma
+                elif "END_TIMEOUT" in mensaje:
+                    valor_ttl = 22  # 22 = Se acabó el tiempo
+                elif "CALIBRATE" in mensaje:
+                    valor_ttl = 100 # 100 = Evento de Calibración
+                elif "END_EXPERIMENT" in mensaje:
+                    valor_ttl = 255 # 255 = Fin del experimento (Cierre)
+
+                # 3. ENVIAR EL PULSO FÍSICO AL USB2TTL8
+                if puerto_ttl and valor_ttl > 0:
+                    # Enviamos el número (enciende los pines correspondientes)
+                    puerto_ttl.write(bytes([valor_ttl]))
+                    
+                    # Mantenemos el pulso encendido por 10 milisegundos 
+                    # (Tiempo estándar recomendado para que el EEG lo detecte sin fallos)
+                    time.sleep(0.01) 
+                    
+                    # Apagamos el pulso enviando un 0
+                    puerto_ttl.write(bytes([0]))
+                    print(f"   => Disparo TTL enviado al EEG: {valor_ttl}")
                 
                 if mensaje == "END_EXPERIMENT":
                     print("Cierre ordenado recibido desde Godot.")
@@ -81,6 +121,11 @@ except KeyboardInterrupt:
     print("\nInterrupción manual.")
 
 finally:
+    # --- LIMPIEZA Y CIERRE SEGURO ---
+    if puerto_ttl and puerto_ttl.is_open:
+        puerto_ttl.write(bytes([0])) # Asegurar que el TTL no se quede "pegado" en alto
+        puerto_ttl.close()
+
     if archivo_abierto:
         print(f"Deteniendo grabación y rescatando datos en {EDF_FILENAME}...")
         el_tracker.stopRecording()
@@ -90,7 +135,7 @@ finally:
         time.sleep(0.5)
         
         el_tracker.closeDataFile()
-        time.sleep(0.5) # <--- Este respiro es VITAL para que el EyeLink prepare el archivo
+        time.sleep(0.5)
         
         ruta_final = os.path.join(carpeta_destino, EDF_FILENAME)
         print(f"Descargando en ruta exacta: {ruta_final}")
@@ -99,4 +144,4 @@ finally:
         
     el_tracker.close()
     sock.close()
-    print("Servidor de Python cerrado correctamente. Puerto liberado.")
+    print("Servidor de Python cerrado correctamente. Puertos liberados.")
