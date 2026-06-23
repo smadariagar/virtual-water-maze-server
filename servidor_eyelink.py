@@ -86,16 +86,24 @@ try:
 
                 # Extraemos el significado del string para enviar un número (1-255)
                 valor_ttl = 0
-                if "START" in mensaje:
-                    valor_ttl = 10  # 10 = Inicio de Trial
-                elif "END_FOUND" in mensaje:
-                    valor_ttl = 21  # 21 = Encontró la plataforma
+                
+                # --- TRIGGERS CLÁSICOS VWM (WINDOWS XP COMPATIBLE) ---
+                if "TRIAL_ONSET" in mensaje:
+                    valor_ttl = 1  # pin 1
+                elif "FIRST_LR_MOVEMENT" in mensaje:
+                    valor_ttl = 2  # pin 2
+                elif "FIRST_FOR_MOVEMENT" in mensaje:
+                    valor_ttl = 3  # pin 3
+                elif "PLATFORM_FOUND" in mensaje:
+                    valor_ttl = 7  # Platform found ; pin 7
+                
+                # --- TRIGGERS ADICIONALES (CONTROL EXPERIMENTO) ---
                 elif "END_TIMEOUT" in mensaje:
-                    valor_ttl = 22  # 22 = Se acabó el tiempo
+                    valor_ttl = 8  # El sujeto no la encontró en el tiempo límite
                 elif "CALIBRATE" in mensaje:
-                    valor_ttl = 100 # 100 = Evento de Calibración
+                    valor_ttl = 100 
                 elif "END_EXPERIMENT" in mensaje:
-                    valor_ttl = 255 # 255 = Fin del experimento (Cierre)
+                    valor_ttl = 255
 
                 # 3. ENVIAR EL PULSO FÍSICO AL USB2TTL8
                 if puerto_ttl and valor_ttl > 0:
